@@ -2,7 +2,7 @@ import os
 import numpy as np
 import torch
 from typing import Tuple
-from termcolor import cprint
+from termcolor import cprintgit
 
 
 class ThingsMEGDataset(torch.utils.data.Dataset):
