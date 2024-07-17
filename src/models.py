@@ -3,33 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops.layers.torch import Rearrange
 
-# Self-Attentionプロック
-class SelfAttention(nn.Module):
-    def __init__(self, dim, heads=8, dropout=0.):
-        super().__init__()
-        self.heads = heads
-        self.scale = dim ** -0.5
-
-        self.to_qkv = nn.Linear(dim, dim * 3, bias=False)
-        self.to_out = nn.Sequential(
-            nn.Linear(dim, dim),
-            nn.Dropout(dropout)
-        )
-
-    def forward(self, x):
-        b, n, _, h = *x.shape, self.heads
-        qkv = self.to_qkv(x).chunk(3, dim=-1)
-        q, k, v = map(lambda t: t.reshape(b, n, h, -1).permute(0, 2, 1, 3), qkv)
-
-        dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
-        attn = dots.softmax(dim=-1)
-
-        out = torch.matmul(attn, v).transpose(1, 2).reshape(b, n, -1)
-        return self.to_out(out)
-
+# ベースモデル
 class BasicConvClassifier(nn.Module):
-    
-#     ベースモデル
     def __init__(
         self,
         num_classes: int,
@@ -55,64 +30,29 @@ class BasicConvClassifier(nn.Module):
         Args:
             X ( b, c, t ): _description_
         Returns:
-             X ( b, num_classes ): _description_
+            X ( b, num_classes ): _description_
         """
         X = self.blocks(X)
 
         return self.head(X)
-    
-        
-#     def __init__(
-#         self,
-#         num_classes: int,
-#         seq_len: int,
-#         in_channels: int,
-#         hid_dim: int = 128,
-#         heads: int = 8,
-#         attn_dropout: float = 0.1
-#     ) -> None:
-#         super().__init__()
-
-#         self.blocks = nn.Sequential(
-#             ConvBlock(in_channels, hid_dim),
-#             ConvBlock(hid_dim, hid_dim),
-#             ConvBlock(hid_dim, hid_dim),  # 追加のConvBlock
-#         )
-
-#         self.attention = SelfAttention(hid_dim, heads, attn_dropout)
-
-#         self.head = nn.Sequential(
-#             nn.AdaptiveAvgPool1d(1),
-#             Rearrange("b d 1 -> b d"),
-#             nn.Linear(hid_dim, num_classes),
-#         )
-
-#     def forward(self, X: torch.Tensor) -> torch.Tensor:
-#         X = self.blocks(X)
-#         X = X.permute(0, 2, 1)  # (b, c, t) -> (b, t, c) for attention
-#         X = self.attention(X)
-#         X = X.permute(0, 2, 1)  # (b, t, c) -> (b, c, t) back to original
-#         return self.head(X)
-
 
 class ConvBlock(nn.Module):
-    #ベースライン
     def __init__(
         self,
         in_dim,
         out_dim,
         kernel_size: int = 3,
-        p_drop: float = 0.1,
+        p_drop: float = 0.5, # ドロップアウト率の調整 default: 0.1
     ) -> None:
         super().__init__()
-        
+
         self.in_dim = in_dim
         self.out_dim = out_dim
 
         self.conv0 = nn.Conv1d(in_dim, out_dim, kernel_size, padding="same")
         self.conv1 = nn.Conv1d(out_dim, out_dim, kernel_size, padding="same")
         # self.conv2 = nn.Conv1d(out_dim, out_dim, kernel_size) # , padding="same")
-        
+
         self.batchnorm0 = nn.BatchNorm1d(num_features=out_dim)
         self.batchnorm1 = nn.BatchNorm1d(num_features=out_dim)
 
@@ -134,40 +74,235 @@ class ConvBlock(nn.Module):
 
         return self.dropout(X)
 
-#     def __init__(
-#         self,
-#         in_dim,
-#         out_dim,
-#         kernel_size: int = 3,
-#         p_drop: float = 0.2,  # ドロップアウト率の調整
-#     ) -> None:
-#         super().__init__()
+# Convモデル
+class ConvClassifier(nn.Module):
+    def __init__(
+        self,
+        num_classes: int,
+        seq_len: int,
+        in_channels: int,
+        hid_dim: int = 256,  # 次元数を増やす
+        num_layers: int = 4,  # より層を深く
+        kernel_size: int = 3,
+        p_drop: float = 0.5
+    ) -> None:
+        super().__init__()
 
-#         self.in_dim = in_dim
-#         self.out_dim = out_dim
+        self.blocks = nn.Sequential(
+            ConvBlock(in_channels, hid_dim, kernel_size, p_drop),
+            *[ConvBlock(hid_dim, hid_dim, kernel_size, p_drop) for _ in range(num_layers - 1)]  # より層を深く
+        )
 
-#         self.conv0 = nn.Conv1d(in_dim, out_dim, kernel_size, padding="same")
-#         self.conv1 = nn.Conv1d(out_dim, out_dim, kernel_size, padding="same")
-#         self.conv2 = nn.Conv1d(out_dim, out_dim, kernel_size, padding="same")  # 追加のConvレイヤー
+        self.head = nn.Sequential(
+            nn.AdaptiveAvgPool1d(1),
+            Rearrange("b d 1 -> b d"),
+            nn.Linear(hid_dim, num_classes),
+        )
 
-#         self.batchnorm0 = nn.BatchNorm1d(num_features=out_dim)
-#         self.batchnorm1 = nn.BatchNorm1d(num_features=out_dim)
-#         self.batchnorm2 = nn.BatchNorm1d(num_features=out_dim)  # 追加のBatchNorm
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        X = self.blocks(X)
+        return self.head(X)
 
-#         self.dropout = nn.Dropout(p_drop)
+# EEGNetモデル
+class EEGNet(nn.Module):
+    def __init__(
+        self,
+        num_classes: int,
+        seq_len: int,
+        in_channels: int = 271,  # 入力チャネル数を271に更新
+        hid_dim: int = 64,
+        kernel_size: int = 3,
+        p_drop: float = 0.5
+    ) -> None:
+        super(EEGNet, self).__init__()
 
-#     def forward(self, X: torch.Tensor) -> torch.Tensor:
-#         if self.in_dim == self.out_dim:
-#             X = self.conv0(X) + X  # skip connection
-#         else:
-#             X = self.conv0(X)
+        self.blocks = nn.Sequential(
+            # 第一層の畳み込み層
+            nn.Conv2d(1, hid_dim, kernel_size=(1, kernel_size), padding=(0, kernel_size // 2)),  # パディングを修正
+            nn.BatchNorm2d(hid_dim),
+            nn.ELU(),
+            # 第二層の畳み込み層
+            nn.Conv2d(hid_dim, hid_dim, kernel_size=(in_channels, 1), groups=hid_dim, padding=(0, 0)),  # 深層畳み込み
+            nn.BatchNorm2d(hid_dim),
+            nn.ELU(),
+            nn.AvgPool2d(kernel_size=(1, 4), stride=(1, 4)),
+            nn.Dropout(p_drop),
+        )
 
-#         X = F.gelu(self.batchnorm0(X))
+        self.head = nn.Sequential(
+            nn.Linear(hid_dim * (seq_len // 4), num_classes),  # 全結合層の入力サイズを修正
+        )
 
-#         X = self.conv1(X) + X  # skip connection
-#         X = F.gelu(self.batchnorm1(X))
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        X = X.unsqueeze(1)  # (batch, channels, time) -> (batch, 1, channels, time)
+        X = self.blocks(X)
+        X = X.view(X.size(0), -1)  # フラット化
+        return self.head(X)
 
-#         X = self.conv2(X) + X  # 追加のConvレイヤーとskip connection
-#         X = F.gelu(self.batchnorm2(X))
 
-#         return self.dropout(X)
+# ResNetモデル
+class ResNet(nn.Module):
+    def __init__(
+        self,
+        num_classes: int,
+        seq_len: int,
+        in_channels: int,
+        hid_dim: int = 128,
+        num_blocks: int = 2,
+        kernel_size: int = 3,
+        p_drop: float = 0.5
+    ) -> None:
+        super().__init__()
+
+        self.blocks = nn.Sequential(
+            ConvBlock(in_channels, hid_dim, kernel_size, p_drop),
+            *[ResidualBlock(hid_dim, hid_dim, kernel_size, p_drop) for _ in range(num_blocks)]
+        )
+
+        self.head = nn.Sequential(
+            nn.AdaptiveAvgPool1d(1),
+            Rearrange("b d 1 -> b d"),
+            nn.Linear(hid_dim, num_classes),
+        )
+
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        X = self.blocks(X)
+        return self.head(X)
+
+class ResidualBlock(nn.Module):
+    def __init__(
+        self,
+        in_dim: int,
+        out_dim: int,
+        kernel_size: int = 3,
+        p_drop: float = 0.5
+    ) -> None:
+        super().__init__()
+
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+
+        self.conv0 = nn.Conv1d(in_dim, out_dim, kernel_size, padding="same")
+        self.conv1 = nn.Conv1d(out_dim, out_dim, kernel_size, padding="same")
+
+        self.batchnorm0 = nn.BatchNorm1d(num_features=out_dim)
+        self.batchnorm1 = nn.BatchNorm1d(num_features=out_dim)
+
+        self.dropout = nn.Dropout(p_drop)
+
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        if self.in_dim == self.out_dim:
+            X_res = X
+        else:
+            X_res = self.conv0(X)
+
+        X = self.conv0(X)
+        X = F.gelu(self.batchnorm0(X))
+
+        X = self.conv1(X)
+        X = F.gelu(self.batchnorm1(X))
+
+        X = self.dropout(X)
+        return X + X_res
+
+# Transformerモデル
+class TransformerClassifier(nn.Module):
+    def __init__(
+        self,
+        num_classes: int,
+        seq_len: int,
+        in_channels: int,
+        hid_dim: int = 128,
+        num_heads: int = 8,
+        num_layers: int = 2,
+        dropout: float = 0.1
+    ) -> None:
+        super().__init__()
+
+        self.blocks = nn.Sequential(
+            ConvBlock(in_channels, hid_dim),
+            ConvBlock(hid_dim, hid_dim),
+        )
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hid_dim,
+            nhead=num_heads,
+            dim_feedforward=hid_dim * 4,
+            dropout=dropout
+        )
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        self.head = nn.Sequential(
+            nn.AdaptiveAvgPool1d(1),
+            Rearrange("b d 1 -> b d"),
+            nn.Linear(hid_dim, num_classes),
+        )
+
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        X = self.blocks(X)
+        X = X.permute(2, 0, 1)  # (b, c, t) -> (t, b, c) for transformer
+        X = self.transformer_encoder(X)
+        X = X.permute(1, 2, 0)  # (t, b, c) -> (b, c, t) back to original
+        return self.head(X)
+
+# 被験者情報を扱うモデル
+class SubjectEmbedding(nn.Module):
+    def __init__(self, num_subjects, embedding_dim):
+        super().__init__()
+        self.embedding = nn.Embedding(num_subjects, embedding_dim)
+    
+    def forward(self, subject_ids):
+        return self.embedding(subject_ids)
+
+class SubjectAwareTransformer(nn.Module):
+    def __init__(
+        self,
+        num_classes: int,
+        num_subjects: int,
+        seq_len: int,
+        in_channels: int,
+        hid_dim: int = 64,
+        num_heads: int = 4,
+        num_layers: int = 2,
+        dropout: float = 0.1,
+        subject_embedding_dim: int = 32
+    ) -> None:
+        super().__init__()
+
+        self.subject_embedding = SubjectEmbedding(num_subjects, subject_embedding_dim)
+
+        self.blocks = nn.Sequential(
+            nn.Conv1d(in_channels, hid_dim, kernel_size=3, padding=1),
+            nn.BatchNorm1d(hid_dim),
+            nn.ReLU(),
+            nn.Conv1d(hid_dim, hid_dim, kernel_size=3, padding=1),
+            nn.BatchNorm1d(hid_dim),
+            nn.ReLU(),
+        )
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hid_dim + subject_embedding_dim,
+            nhead=num_heads,
+            dim_feedforward=(hid_dim + subject_embedding_dim) * 4,
+            dropout=dropout
+        )
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        self.head = nn.Sequential(
+            nn.AdaptiveAvgPool1d(1),
+            Rearrange("b d 1 -> b d"),
+            nn.Linear(hid_dim + subject_embedding_dim, num_classes),
+        )
+
+    def forward(self, X: torch.Tensor, subject_ids: torch.Tensor) -> torch.Tensor:
+        subject_emb = self.subject_embedding(subject_ids)
+        subject_emb = subject_emb.unsqueeze(2).expand(-1, -1, X.size(2))  # (b, emb_dim, t)
+
+        X = self.blocks(X)
+        X = torch.cat([X, subject_emb], dim=1)  # MEGデータと被験者埋め込みを結合
+
+        X = X.permute(2, 0, 1)  # (b, c, t) -> (t, b, c) for transformer
+        X = self.transformer_encoder(X)
+        X = X.permute(1, 2, 0)  # (t, b, c) -> (b, c, t) back to original
+
+        return self.head(X)

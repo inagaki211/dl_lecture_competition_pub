@@ -17,6 +17,8 @@ class ThingsMEGDataset(Dataset):
         self.original_sampling_rate = 200
         # EEGPreprocessingクラスのインスタンスを初期化
         self.preprocessor = EEGPreprocessing(target_sampling_rate, baseline_start_ms, baseline_end_ms)
+        # 追加: 被験者の総数を計算
+        self._calculate_num_subjects()
 
     def __len__(self) -> int:
         return self.num_samples
@@ -50,3 +52,15 @@ class ThingsMEGDataset(Dataset):
     @property
     def seq_len(self) -> int:
         return np.load(os.path.join(self.data_dir, f"{self.split}_X", "00000.npy")).shape[1]
+
+    @property
+    def num_subjects(self) -> int:
+        return self._num_subjects
+
+    def _calculate_num_subjects(self):
+        unique_subjects = set()
+        subject_idxs_dir = os.path.join(self.data_dir, f"{self.split}_subject_idxs")
+        for file in glob(os.path.join(subject_idxs_dir, "*.npy")):
+            subject_idx = np.load(file)
+            unique_subjects.add(subject_idx.item())
+        self._num_subjects = len(unique_subjects)
