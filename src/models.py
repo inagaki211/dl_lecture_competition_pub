@@ -261,8 +261,8 @@ class SubjectAwareTransformer(nn.Module):
         num_subjects: int,
         seq_len: int,
         in_channels: int,
-        hid_dim: int = 64,
-        num_heads: int = 4,
+        hid_dim: int = 128,
+        num_heads: int = 8,
         num_layers: int = 2,
         dropout: float = 0.1,
         subject_embedding_dim: int = 32
