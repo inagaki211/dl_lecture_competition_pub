@@ -17,7 +17,6 @@ class ThingsMEGDataset(Dataset):
         self.original_sampling_rate = 200
         # EEGPreprocessingクラスのインスタンスを初期化
         self.preprocessor = EEGPreprocessing(target_sampling_rate, baseline_start_ms, baseline_end_ms)
-        # 追加: 被験者の総数を計算
         self._calculate_num_subjects()
 
     def __len__(self) -> int:

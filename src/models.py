@@ -245,7 +245,53 @@ class TransformerClassifier(nn.Module):
         X = X.permute(1, 2, 0)  # (t, b, c) -> (b, c, t) back to original
         return self.head(X)
 
-# 被験者情報を扱うモデル
+# 被験者情報を扱うConvモデル
+class SubjectAwareConvClassifier(nn.Module):
+    def __init__(
+        self,
+        num_classes: int,
+        num_subjects: int,
+        seq_len: int,
+        in_channels: int,
+        hid_dim: int = 64,
+        subject_embedding_dim: int = 16
+    ) -> None:
+        super().__init__()
+
+        self.subject_embedding = nn.Embedding(num_subjects, subject_embedding_dim)
+
+        self.conv_blocks = nn.Sequential(
+            nn.Conv1d(in_channels + subject_embedding_dim, hid_dim, kernel_size=3, padding=1),
+            nn.BatchNorm1d(hid_dim),
+            nn.ReLU(),
+            nn.Conv1d(hid_dim, hid_dim * 2, kernel_size=3, padding=1),
+            nn.BatchNorm1d(hid_dim * 2),
+            nn.ReLU(),
+            nn.Conv1d(hid_dim * 2, hid_dim * 4, kernel_size=3, padding=1),
+            nn.BatchNorm1d(hid_dim * 4),
+            nn.ReLU(),
+        )
+
+        self.global_pool = nn.AdaptiveAvgPool1d(1)
+        self.fc = nn.Linear(hid_dim * 4, num_classes)
+
+    def forward(self, X: torch.Tensor, subject_ids: torch.Tensor) -> torch.Tensor:
+        # 被験者埋め込みを取得し、MEGデータと同じ時間次元に拡張
+        subject_emb = self.subject_embedding(subject_ids)
+        subject_emb = subject_emb.unsqueeze(2).expand(-1, -1, X.size(2))
+
+        # MEGデータと被験者埋め込みを結合
+        X = torch.cat([X, subject_emb], dim=1)
+
+        # 畳み込みブロックを通す
+        X = self.conv_blocks(X)
+
+        # グローバルプーリングと全結合層
+        X = self.global_pool(X).squeeze(2)
+        X = self.fc(X)
+        return X
+
+# 被験者情報を扱うTransformerモデル
 class SubjectEmbedding(nn.Module):
     def __init__(self, num_subjects, embedding_dim):
         super().__init__()

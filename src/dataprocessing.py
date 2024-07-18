@@ -34,9 +34,7 @@ class EEGPreprocessing:
         
         # ベースライン期間の値を抽出
         baseline_values = signal[:, baseline_start_idx:baseline_end_idx]
-         # ベースライン期間が空でないかチェック
-        if baseline_values.size == 0:
-            raise ValueError("Baseline period is empty. Check the baseline start and end times relative to the epoch period.")
+        
         
         # ベースライン期間の平均を計算
         baseline_mean = baseline_values.mean(axis=1, keepdims=True)

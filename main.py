@@ -11,7 +11,7 @@ from termcolor import cprint
 from tqdm import tqdm
 
 from src.datasets import ThingsMEGDataset
-from src.models import BasicConvClassifier, ConvClassifier, ResNet, TransformerClassifier, EEGNet, SubjectAwareTransformer
+from src.models import BasicConvClassifier, ConvClassifier, ResNet, TransformerClassifier, EEGNet, SubjectAwareTransformer, SubjectAwareConvClassifier
 from src.utils import set_seed
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
@@ -65,9 +65,17 @@ def run(args: DictConfig):
     # ).to(args.device)
 
     # Subject-aware Transformerモデル
-    model = SubjectAwareTransformer(
+    # model = SubjectAwareTransformer(
+    #     num_classes=train_set.num_classes,
+    #     num_subjects=train_set.num_subjects,
+    #     seq_len=train_set.seq_len,
+    #     in_channels=train_set.num_channels
+    # ).to(args.device)
+
+    # Subject-aware Convモデル
+    model = SubjectAwareConvClassifier(
         num_classes=train_set.num_classes,
-        num_subjects=train_set.num_subjects,  # ThingsMEGDatasetにnum_subjectsプロパティを追加する必要があります
+        num_subjects=train_set.num_subjects, 
         seq_len=train_set.seq_len,
         in_channels=train_set.num_channels
     ).to(args.device)
@@ -75,7 +83,7 @@ def run(args: DictConfig):
     # ------------------
     #     Optimizer
     # ------------------
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(args.beta1, args.beta2), weight_decay=args.weight_decay)
 
     # ------------------
     #   Start training
@@ -92,8 +100,10 @@ def run(args: DictConfig):
 
         model.train()
         for X, y, subject_idxs in tqdm(train_loader, desc="Train"):
+            # X, y= X.to(args.device), y.to(args.device)
             X, y, subject_idxs = X.to(args.device), y.to(args.device), subject_idxs.to(args.device)
 
+            # y_pred = model(X)
             y_pred = model(X, subject_idxs)
 
             loss = F.cross_entropy(y_pred, y)
@@ -113,9 +123,11 @@ def run(args: DictConfig):
         model.eval()
         for X, y, subject_idxs in tqdm(val_loader, desc="Validation"):
             X, y, subject_idxs = X.to(args.device), y.to(args.device), subject_idxs.to(args.device)
+            # X, y= X.to(args.device), y.to(args.device)
 
             with torch.no_grad():
                 y_pred = model(X, subject_idxs)
+                # y_pred = model(X)
 
             val_loss.append(F.cross_entropy(y_pred, y).item())
             val_acc.append(accuracy(y_pred, y).item())
@@ -141,6 +153,8 @@ def run(args: DictConfig):
     for X, subject_idxs in tqdm(test_loader, desc="Validation"):
         X, subject_idxs = X.to(args.device), subject_idxs.to(args.device)
         preds.append(model(X, subject_idxs).detach().cpu())
+        # X = X.to(args.device)
+        # preds.append(model(X).detach().cpu())
 
     preds = torch.cat(preds, dim=0).numpy()
     np.save(os.path.join(logdir, "submission"), preds)
