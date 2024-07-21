@@ -1,9 +1,10 @@
 batch_size: 128
-epochs: 1
+epochs: 80
 lr: 0.0003
 beta1: 0.9
 beta2: 0.999
 weight_decay: 0.0001
+
 
 device: cuda:0
 num_workers: 4
@@ -11,6 +12,5 @@ seed: 1234
 use_wandb: False
 
 data_dir: data
-
 # Evaluation
 model_path: 

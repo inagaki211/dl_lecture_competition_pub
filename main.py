@@ -1,6 +1,6 @@
 import os, sys
 import gc
-import numpy as np #1.24.3
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torchmetrics import Accuracy
@@ -81,9 +81,10 @@ def run(args: DictConfig):
     ).to(args.device)
 
     # ------------------
-    #     Optimizer
+    #     Optimizer, Scheduler
     # ------------------
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(args.beta1, args.beta2), weight_decay=args.weight_decay)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
 
     # ------------------
     #   Start training
@@ -92,7 +93,7 @@ def run(args: DictConfig):
     accuracy = Accuracy(
         task="multiclass", num_classes=train_set.num_classes, top_k=10
     ).to(args.device)
-    print(model)
+    print(model) 
     for epoch in range(args.epochs):
         print(f"Epoch {epoch+1}/{args.epochs}")
 
@@ -142,6 +143,7 @@ def run(args: DictConfig):
             torch.save(model.state_dict(), os.path.join(logdir, "model_best.pt"))
             max_val_acc = np.mean(val_acc)
 
+        scheduler.step()
 
     # ----------------------------------
     #  Start evaluation with best model

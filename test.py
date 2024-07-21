@@ -1,7 +1,8 @@
-# import torch
-# print(torch.version.cuda)
-# print(torch.version.cuda)
-# print(torch.cuda.is_available())
+import torch
+print(torch.version.cuda)
+print(torch.version.cuda)
+print(torch.cuda.is_available())
+print(torch.__version__)
 
 import os
 print(os.path.exists('data/train_X/00000.npy'))  # Trueを期待
